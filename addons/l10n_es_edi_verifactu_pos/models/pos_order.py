@@ -131,8 +131,11 @@ class PosOrder(models.Model):
         )
         return selected_clave_regimen and selected_clave_regimen.split('_', 1)[0]
 
+    # TODO: remove in master (19.0)
     def l10n_es_edi_verifactu_button_cancel(self):
-        self._l10n_es_edi_verifactu_mark_for_next_batch(cancellation=True)
+        # We should not Veri*Factu cancel orders. There is no clean way to cancel PoS orders.
+        # So they would still be reflected in the accounting.
+        pass
 
     def l10n_es_edi_verifactu_button_send(self):
         self._l10n_es_edi_verifactu_mark_for_next_batch()
@@ -141,8 +144,8 @@ class PosOrder(models.Model):
         self.ensure_one()
         errors = []
 
-        if self.state != 'paid':
-            errors.append(_("Veri*Factu documents can only be generated for paid Point of Sale Orders."))
+        if self.state not in ('paid', 'done'):
+            errors.append(_("Veri*Factu documents can only be generated for paid or posted Point of Sale Orders."))
 
         return errors
 
@@ -231,8 +234,9 @@ class PosOrder(models.Model):
     def _process_saved_order(self, draft):
         self.ensure_one()
         if self.l10n_es_edi_verifactu_required:
-            if not self.to_invoice and self.amount_total > 400:
-                raise UserError(_("The order needs to be invoiced since its total amount is above 400€."))
+            if not self.to_invoice and self.amount_total > self.company_id.l10n_es_simplified_invoice_limit:
+                raise UserError(_("The order needs to be invoiced since its total amount is above %s€.",
+                                  self.company_id.l10n_es_simplified_invoice_limit))
             refunded_order = self.refunded_order_id
             if refunded_order:
                 if not self.l10n_es_edi_verifactu_refund_reason:
