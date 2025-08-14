@@ -1503,6 +1503,15 @@ class AccountTax(models.Model):
             amounts_to_distribute[i] += amount_to_distribute
         return amounts_to_distribute
 
+    def _round_total_per_tax(self, total_per_tax, company):
+        for (_tax, currency, _is_refund, _is_reverse_charge), tax_amounts in total_per_tax.items():
+            tax_amounts['raw_tax_amount_currency'] = currency.round(tax_amounts['raw_tax_amount_currency'])
+            tax_amounts['raw_tax_amount'] = company.currency_id.round(tax_amounts['raw_tax_amount'])
+            tax_amounts['raw_base_amount_currency'] = currency.round(tax_amounts['raw_base_amount_currency'])
+            tax_amounts['raw_base_amount'] = company.currency_id.round(tax_amounts['raw_base_amount'])
+            tax_amounts['raw_total_amount_currency'] = currency.round(tax_amounts['raw_total_amount_currency'])
+            tax_amounts['raw_total_amount'] = company.currency_id.round(tax_amounts['raw_total_amount'])
+
     @api.model
     def _round_base_lines_tax_details(self, base_lines, company, tax_lines=None):
         """ Round the 'tax_details' added to base_lines with the '_add_accounting_data_to_base_line_tax_details'.
@@ -1664,13 +1673,7 @@ class AccountTax(models.Model):
                     base_amounts['base_lines'].append(base_line)
 
         # Round 'total_per_tax'.
-        for (_tax, currency, _is_refund, _is_reverse_charge), tax_amounts in total_per_tax.items():
-            tax_amounts['raw_tax_amount_currency'] = currency.round(tax_amounts['raw_tax_amount_currency'])
-            tax_amounts['raw_tax_amount'] = company.currency_id.round(tax_amounts['raw_tax_amount'])
-            tax_amounts['raw_base_amount_currency'] = currency.round(tax_amounts['raw_base_amount_currency'])
-            tax_amounts['raw_base_amount'] = company.currency_id.round(tax_amounts['raw_base_amount'])
-            tax_amounts['raw_total_amount_currency'] = currency.round(tax_amounts['raw_total_amount_currency'])
-            tax_amounts['raw_total_amount'] = company.currency_id.round(tax_amounts['raw_total_amount'])
+        self._round_total_per_tax(total_per_tax, company)
 
         # Round 'total_per_base'.
         for (currency, _is_refund), base_amounts in total_per_base.items():
@@ -1721,6 +1724,18 @@ class AccountTax(models.Model):
                 )
                 biggest_total_per_tax['raw_tax_amount_currency'] += delta_raw_tax_amount_currency
                 biggest_total_per_tax['raw_tax_amount'] += delta_raw_tax_amount
+
+                # Suppose a vendor bill of 123.0 with 23% tax.
+                # Your total amounts are 123.0 for the base, 28.29 for the tax and a total of 151.29.
+                # If the tax line says a tax amount of 28.30, we want the total to be 151.30.
+                # So we have to increase the total too since the Portugal computation is based on it.
+                if country_code == 'PT' and delta_raw_tax_amount_currency:
+                    total_per_tax[tax_rounding_key]['raw_total_amount_currency'] += delta_raw_tax_amount_currency
+                    total_per_tax[tax_rounding_key]['raw_total_amount'] += delta_raw_tax_amount
+
+                    base_rounding_key = (tax_line_key[1], tax_rep.document_type == 'refund')
+                    total_per_base[base_rounding_key]['raw_total_amount_currency'] += delta_raw_tax_amount_currency
+                    total_per_base[base_rounding_key]['raw_total_amount'] += delta_raw_tax_amount
 
         # Dispatch the delta in term of tax amounts across the tax details when dealing with the 'round_globally' method.
         # Suppose 2 lines:
@@ -2935,6 +2950,7 @@ class AccountTaxRepartitionLine(models.Model):
     factor_percent = fields.Float(
         string="%",
         default=100,
+        digits=(16, 12),
         required=True,
         help="Factor to apply on the account move lines generated from this distribution line, in percents",
     )
